@@ -1,5 +1,34 @@
-sbpl_lattice_planner
-====================
+sbpl_lattice_planner_towing
+===========================
+
+This is a modified version of the original `sbpl_lattice_planner` (https://github.com/ros-planning/navigation_experimental/tree/noetic-devel/sbpl_lattice_planner), 
+that enables the use of a custom SBPL towing planning environment (https://github.com/jordi-lete/sbpl_towing)
+
+## Build
+
+I recommend creating a new catkin workspace for both repositories if you haven't done this already:
+```bash
+mkdir -p ~/sbpl_towing_ws/src
+cd ~/sbpl_towing_ws/
+catkin_make
+```
+
+Then clone this repo and build
+
+```bash
+cd src/
+git clone https://github.com/jordi-lete/sbpl_lattice_planner_towing.git
+```
+
+```bash
+cd ..
+catkin_make
+source devel/setup.bash
+```
+
+You can also add the source command to your ./bashrc script to ensure the workspace is sourced for all future shells.
+
+## SBPL lattice planner documentation
 
 The `sbpl_lattice_planner` is a global planner plugin for
 [move_base](https://wiki.ros.org/move_base) and wraps the
