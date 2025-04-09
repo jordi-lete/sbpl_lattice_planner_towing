@@ -9,6 +9,7 @@ using namespace std;
 // ROS
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <visualization_msgs/Marker.h>
 
 // Costmap used for the map representation
@@ -88,11 +89,11 @@ private:
   void getTrailerFootprintList(const std::vector<EnvNAVXYTHETALAT3Dpt_t>& sbpl_trailer_path, const std::string& path_frame_id,
                         visualization_msgs::Marker& ma);
 
-  void trailerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
+  void trailerPoseCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
   void getTrailerPose(TrailerState& trailer, const geometry_msgs::PoseStamped& base_pose);
 
   bool has_trailer_pose_;
-  geometry_msgs::PoseStamped last_trailer_pose_;
+  std_msgs::Float32MultiArray last_trailer_pose_;
   bool initialized_;
 
   SBPLPlanner* planner_;
@@ -130,6 +131,10 @@ private:
   std::vector<geometry_msgs::Point> footprint_;
   double trailer_width_;
   double trailer_length_;
+  double R0_;
+  double F1_;
+  double F2_;
+  int num_pivots_;
   std::vector<geometry_msgs::Point> trailer_footprint_;
   unsigned int current_env_width_;
   unsigned int current_env_height_;

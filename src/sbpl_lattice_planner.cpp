@@ -136,14 +136,14 @@ void SBPLLatticePlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
     private_nh.param("timetoturn45degsinplace_secs", timetoturn45degsinplace_secs, 0.6);
 
     int lethal_obstacle;
-    private_nh.param("lethal_obstacle",lethal_obstacle,20);
+    private_nh.param("lethal_obstacle",lethal_obstacle,254); // Changed from 20 to match the SBPL lethal cost convention
     lethal_obstacle_ = (unsigned char) lethal_obstacle;
     inscribed_inflated_obstacle_ = lethal_obstacle_-1;
-    sbpl_cost_multiplier_ = (unsigned char) (costmap_2d::INSCRIBED_INFLATED_OBSTACLE/inscribed_inflated_obstacle_ + 1);
-    ROS_DEBUG("SBPL: lethal: %uz, inscribed inflated: %uz, multiplier: %uz",lethal_obstacle,inscribed_inflated_obstacle_,sbpl_cost_multiplier_);
+    sbpl_cost_multiplier_ = (unsigned char) (costmap_2d::INSCRIBED_INFLATED_OBSTACLE/inscribed_inflated_obstacle_ + 1); 
+    ROS_DEBUG("SBPL: lethal: %uz, inscribed inflated: %uz, multiplier: %uz",lethal_obstacle,inscribed_inflated_obstacle_,sbpl_cost_multiplier_); // 254, 253, 2
 
     private_nh.param("publish_footprint_path", publish_footprint_path_, bool(true));
-    private_nh.param<int>("visualizer_skip_poses", visualizer_skip_poses_, 5);
+    private_nh.param<int>("visualizer_skip_poses", visualizer_skip_poses_, 10);
 
     private_nh.param("allow_unknown", allow_unknown_, bool(true));
 
@@ -240,6 +240,10 @@ void SBPLLatticePlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
 
         private_nh.param("trailer_length", trailer_length_, 0.0);
         private_nh.param("trailer_width", trailer_width_, 0.0);
+        private_nh.param("R0", R0_, 0.56);
+        private_nh.param("F1", F1_, 1.21);
+        private_nh.param("F2", F2_, 0.87);
+        private_nh.param("num_pivots", num_pivots_, 2);
 
         trailer_footprint.clear();
         geometry_msgs::Point pt;
@@ -266,12 +270,13 @@ void SBPLLatticePlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
             ret = xxx_env_->InitializeEnv(costmap_ros_->getCostmap()->getSizeInCellsX(), // width
                                         costmap_ros_->getCostmap()->getSizeInCellsY(), // height
                                         0, // mapdata
-                                        0, 0, 0, 0, 0, // start (x, y, theta, t)
+                                        0, 0, 0, 0, 0, // start (x, y, theta, theta1, theta2)
                                         0, 0, 0, // goal (x, y, theta)
-                                        0.5, 0.5, 6.0, //goal tolerance (m, m, rad)
+                                        0.5, 0.5, 0.4, //goal tolerance (m, m, rad)
                                         perimeterptsV, trailer_perimeterptsV, costmap_ros_->getCostmap()->getResolution(), nominalvel_mpersecs,
                                         timetoturn45degsinplace_secs, obst_cost_thresh,
-                                        primitive_filename_.c_str());
+                                        primitive_filename_.c_str(),
+                                        R0_, F1_, F2_, num_pivots_);
             current_env_width_ = costmap_ros_->getCostmap()->getSizeInCellsX();
             current_env_height_ = costmap_ros_->getCostmap()->getSizeInCellsY();
         }
@@ -288,14 +293,15 @@ void SBPLLatticePlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
       ROS_ERROR("Unsupported environment type: %s\n", environment_type_.c_str());
       exit(1);
     }
-
-    for (ssize_t ix(0); ix < costmap_ros_->getCostmap()->getSizeInCellsX(); ++ix)
-      for (ssize_t iy(0); iy < costmap_ros_->getCostmap()->getSizeInCellsY(); ++iy)
+    for (ssize_t ix(0); ix < costmap_ros_->getCostmap()->getSizeInCellsX(); ++ix) {
+      for (ssize_t iy(0); iy < costmap_ros_->getCostmap()->getSizeInCellsY(); ++iy) {
         if (using_custom_envirment_) {
             xxx_env_->UpdateCost(ix, iy, costMapCostToSBPLCost(costmap_ros_->getCostmap()->getCost(ix,iy)));
         } else {
             navxythetalat_env_->UpdateCost(ix, iy, costMapCostToSBPLCost(costmap_ros_->getCostmap()->getCost(ix,iy)));
         }
+      }
+    }
     if (using_custom_envirment_){
         if ("ARAPlanner" == planner_type_){
         ROS_INFO("Planning with ARA*");
@@ -329,7 +335,7 @@ void SBPLLatticePlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
     sbpl_plan_footprint_pub_ = private_nh.advertise<visualization_msgs::Marker>("footprint_markers", 1);
     has_trailer_pose_ = false;
     if (using_custom_envirment_){
-        trailer_pose_sub_ = private_nh.subscribe("trailer_pose", 1, &SBPLLatticePlanner::trailerPoseCallback, this);
+        trailer_pose_sub_ = private_nh.subscribe("/trailer_yaw_array", 1, &SBPLLatticePlanner::trailerPoseCallback, this);
         tf_listener_= std::make_unique<tf2_ros::TransformListener>(tf_buffer_);
     }
     sbpl_plan_trailer_footprint_pub_ = private_nh.advertise<visualization_msgs::Marker>("trailer_footprint_markers", 1);
@@ -396,17 +402,20 @@ unsigned char SBPLLatticePlanner::computeCircumscribedCost() {
   return result;
 }
 
-void SBPLLatticePlanner::trailerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+void SBPLLatticePlanner::trailerPoseCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
   last_trailer_pose_ = *msg;
   has_trailer_pose_ = true;
+  // ROS_ERROR("Has trailer pose");
 }
 
 void SBPLLatticePlanner::getTrailerPose(TrailerState& trailer, const geometry_msgs::PoseStamped& base_pose) {
-  if (has_trailer_pose_ && (ros::Time::now() - last_trailer_pose_.header.stamp) < ros::Duration(1.0)) {
-    ROS_INFO("Using trailer localisation for start pose");
-    trailer.theta1 = 2 * atan2(last_trailer_pose_.pose.orientation.z, last_trailer_pose_.pose.orientation.w);
+  if (has_trailer_pose_) {
+    // ROS_ERROR("Using trailer localisation for start pose");
+    double theta = 2 * atan2(base_pose.pose.orientation.z, base_pose.pose.orientation.w);
+    trailer.theta1 = last_trailer_pose_.data[0] + theta;
     // need to change these for the actual message type
-    trailer.theta2 = 2 * atan2(last_trailer_pose_.pose.orientation.z, last_trailer_pose_.pose.orientation.w);
+    trailer.theta2 = last_trailer_pose_.data[1] + theta;
+    // ROS_ERROR("theta: %f, theta1: %f, theta2: %f", theta, trailer.theta1, trailer.theta2);
     return;
   }
   try {
